@@ -5,7 +5,7 @@ services:
     image: postgres:12.3
     init: true
     environment:
-      POSTGRES_USER: "1"
+      POSTGRES_USER: "kris"
       POSTGRES_PASSWORD: "1"
       PGDATA: "/var/lib/postgresql/data/sampleDir"
       POSTGRES_DB: "dev"
