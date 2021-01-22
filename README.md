@@ -11,4 +11,4 @@ You can surely visit [develop](https://github.com/krisfromhbk/mx-backend-trainee
 - [ ] Basic HTTP API via [standard](https://golang.org/pkg/net/http/) library.
 
 ## References
-[Task definition](https://github.com/avito-tech/auto-backend-trainee-assignment)
+[Task definition](https://github.com/avito-tech/mx-backend-trainee-assignment)
