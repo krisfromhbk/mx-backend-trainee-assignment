@@ -1,19 +1,37 @@
 package postgresql
 
-type bulk struct {
+type bulkProducts struct {
 	rows []product
 	idx  int
 }
 
-func (b *bulk) Next() bool {
+func (b *bulkProducts) Next() bool {
 	b.idx++
 	return b.idx < len(b.rows)
 }
 
-func (b *bulk) Values() ([]interface{}, error) {
+func (b *bulkProducts) Values() ([]interface{}, error) {
 	return b.rows[b.idx].interfaceSlice(), nil
 }
 
-func (b *bulk) Err() error {
+func (b *bulkProducts) Err() error {
+	return nil
+}
+
+type bulkOfferIDs struct {
+	rows []int64
+	idx  int
+}
+
+func (b *bulkOfferIDs) Next() bool {
+	b.idx++
+	return b.idx < len(b.rows)
+}
+
+func (b *bulkOfferIDs) Values() ([]interface{}, error) {
+	return []interface{}{b.rows[b.idx]}, nil
+}
+
+func (b *bulkOfferIDs) Err() error {
 	return nil
 }

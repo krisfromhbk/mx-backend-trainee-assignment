@@ -8,13 +8,17 @@ import (
 	"github.com/jackc/pgx/v4/log/zapadapter"
 	"github.com/jackc/pgx/v4/pgxpool"
 	"go.uber.org/zap"
+	"strconv"
+	"strings"
 )
 
+// Storage defines fields used in db interaction processes
 type Storage struct {
 	logger *zap.Logger
 	db     *pgxpool.Pool
 }
 
+// NewStorage constructs Store instance with configured logger
 func NewStorage(ctx context.Context, logger *zap.Logger) (*Storage, error) {
 	if logger == nil {
 		return nil, errors.New("no logger provided")
@@ -35,16 +39,23 @@ func NewStorage(ctx context.Context, logger *zap.Logger) (*Storage, error) {
 	}, nil
 }
 
+// Close closes all database connections in pool
+func (s *Storage) Close() {
+	s.logger.Info("Closing storage connections")
+	s.db.Close()
+}
+
 // Upsert performs three-step transaction:
 // 1. creates temporary table
-// 2. feels it via bulk insert with incoming data that is not marked for deletion
+// 2. fills it via bulkProducts insert with incoming data
 // 3. insert rows from temporary table into "products"
 // if provided ctx is not canceled or timed out transaction will be committed.
+//
 // Returns added and updated rows count and error
-func (s *Storage) Upsert(ctx context.Context, products []product) (int, int, error) {
-	bulkData := bulk{
+func (s *Storage) Upsert(ctx context.Context, products []product) (int64, int64, error) {
+	bulkData := bulkProducts{
 		rows: products,
-		idx:  0,
+		idx:  -1,
 	}
 
 	tx, err := s.db.Begin(ctx)
@@ -69,7 +80,7 @@ func (s *Storage) Upsert(ctx context.Context, products []product) (int, int, err
 		return 0, 0, err
 	}
 
-	s.logger.Debug("Performing bulk insert on temporary table")
+	s.logger.Debug("Performing bulkProducts insert on temporary table")
 
 	columnNames := []string{"merchant_id", "offer_id", "name", "price", "quantity"}
 	_, err = tx.CopyFrom(ctx, pgx.Identifier{"products_temporary"}, columnNames, &bulkData)
@@ -79,7 +90,7 @@ func (s *Storage) Upsert(ctx context.Context, products []product) (int, int, err
 	}
 
 	s.logger.Debug("Performing insert from temporary to products")
-	var inserted, updated int
+	var inserted, updated int64
 	sql = `WITH t AS
         (INSERT INTO products
          SELECT * FROM products_temporary
@@ -120,8 +131,116 @@ func (s *Storage) Upsert(ctx context.Context, products []product) (int, int, err
 	return inserted, updated, nil
 }
 
-// Close closes all database connections in pool
-func (s *Storage) Close() {
-	s.logger.Info("Closing storage connections")
-	s.db.Close()
+// Delete performs variable-step transaction in order to delete provided products.
+// A. Transaction will have one step if product slice length is relatively small.
+// B. Transaction will have three steps if product slice length is relatively big.
+// The actual values of "small" and "big" should be found by tests, but for now let's
+// state that less than 500 is small.
+//
+// Transaction B has following steps:
+// 1. create temporary table
+// 2. fill it via bulkProducts insert with incoming data
+// 3. perform delete using temporary table
+//
+// Returns deleted rows and an error.
+func (s *Storage) Delete(ctx context.Context, merchantID int64, offerIDs []int64) (int64, error) {
+	isLarge := len(offerIDs) > 500
+	var deleted int64
+
+	tx, err := s.db.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	// error handling can be omitted for rollback according to docs
+	// see https://pkg.go.dev/github.com/jackc/pgx/v4?tab=doc#hdr-Transactions or any source comment on Rollback
+	defer tx.Rollback(context.Background())
+
+	if !isLarge {
+		s.logger.Debug("Performing 'values based' delete")
+
+		sql := `DELETE FROM offerIDs
+                 WHERE merchant_id = $1
+                   AND offer_id IN (VALUES `
+
+		builder := new(strings.Builder)
+		builder.WriteString(sql)
+		var i int
+		for ; i < len(offerIDs)-1; i++ {
+			builder.WriteString("(")
+			builder.WriteString(strconv.FormatInt(offerIDs[i], 10))
+			builder.WriteString("), ")
+		}
+		builder.WriteString("(")
+		builder.WriteString(strconv.FormatInt(offerIDs[i], 10))
+		builder.WriteString("))")
+
+		tag, err := tx.Exec(ctx, builder.String(), merchantID)
+		if err != nil {
+			s.logger.Error("Performing 'values based' delete", zap.Error(err))
+			return 0, err
+		}
+
+		deleted = tag.RowsAffected()
+	} else {
+		s.logger.Debug("Performing 'temporary table based' delete")
+
+		s.logger.Debug("Creating temporary table")
+
+		sql := `CREATE TEMPORARY TABLE offer_ids_temporary (offer_id offer_id)
+                    ON COMMIT DELETE ROWS`
+
+		_, err = tx.Exec(ctx, sql)
+		if err != nil {
+			s.logger.Error("Create temporary table", zap.Error(err))
+			return 0, err
+		}
+
+		s.logger.Debug("Performing bulk insert on temporary table")
+
+		bulkData := &bulkOfferIDs{
+			rows: offerIDs,
+			idx:  -1,
+		}
+		_, err = tx.CopyFrom(ctx, pgx.Identifier{"offer_ids_temporary"}, []string{"offer_id"}, bulkData)
+		if err != nil {
+			s.logger.Error("Bulk insert", zap.Error(err))
+			return 0, err
+		}
+
+		s.logger.Debug("Performing delete using temporary table")
+
+		sql = `DELETE FROM products
+                USING offer_ids_temporary
+                WHERE merchant_id = $1
+                  AND products.offer_id = offer_ids_temporary.offer_id`
+
+		tag, err := tx.Exec(ctx, sql, merchantID)
+		if err != nil {
+			s.logger.Error("Delete using temporary table", zap.Error(err))
+			return 0, err
+		}
+
+		deleted = tag.RowsAffected()
+	}
+
+	ctxErr := ctx.Err()
+	if ctxErr != nil {
+		switch {
+		case errors.Is(ctxErr, context.DeadlineExceeded):
+			s.logger.Info("Task deadline exceeded")
+			return 0, ctxErr
+
+		case errors.Is(ctxErr, context.Canceled):
+			s.logger.Info("Task is canceled")
+			return 0, ctxErr
+		}
+	}
+
+	err = tx.Commit(ctx)
+	if err != nil {
+		s.logger.Error("Commit transaction", zap.Error(err))
+		return 0, err
+	}
+
+	return deleted, nil
 }
