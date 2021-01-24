@@ -27,6 +27,7 @@ func NewStorage(ctx context.Context, logger *zap.Logger) (*Storage, error) {
 	config, _ := pgxpool.ParseConfig("")
 
 	config.ConnConfig.Logger = zapadapter.NewLogger(logger)
+	config.ConnConfig.LogLevel = pgx.LogLevelError
 
 	pool, err := pgxpool.ConnectConfig(ctx, config)
 	if err != nil {
@@ -52,7 +53,7 @@ func (s *Storage) Close() {
 // if provided ctx is not canceled or timed out transaction will be committed.
 //
 // Returns added and updated rows count and error
-func (s *Storage) Upsert(ctx context.Context, products []product) (int64, int64, error) {
+func (s *Storage) Upsert(ctx context.Context, products []Product) (int64, int64, error) {
 	bulkData := bulkProducts{
 		rows: products,
 		idx:  -1,
@@ -95,11 +96,11 @@ func (s *Storage) Upsert(ctx context.Context, products []product) (int64, int64,
         (INSERT INTO products
          SELECT * FROM products_temporary
              ON CONFLICT (merchant_id, offer_id) DO UPDATE
-			SET name = excluded.name
-                price = excluded.price
+			SET name = excluded.name,
+                price = excluded.price,
                 quantity = excluded.quantity
       RETURNING xmax)
-         SELECT SUM(CASE WHEN xmax = 0 THEN 1 ELSE 0 END) AS inserted
+         SELECT SUM(CASE WHEN xmax = 0 THEN 1 ELSE 0 END) AS inserted,
                 SUM(CASE WHEN xmax::text::int > 0 THEN 1 ELSE 0 END) AS updated
            FROM t`
 
@@ -132,8 +133,8 @@ func (s *Storage) Upsert(ctx context.Context, products []product) (int64, int64,
 }
 
 // Delete performs variable-step transaction in order to delete provided products.
-// A. Transaction will have one step if product slice length is relatively small.
-// B. Transaction will have three steps if product slice length is relatively big.
+// A. Transaction will have one step if Product slice length is relatively small.
+// B. Transaction will have three steps if Product slice length is relatively big.
 // The actual values of "small" and "big" should be found by tests, but for now let's
 // state that less than 500 is small.
 //
