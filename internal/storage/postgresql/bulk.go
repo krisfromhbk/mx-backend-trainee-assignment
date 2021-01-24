@@ -1,8 +1,9 @@
 package postgresql
 
 type bulkProducts struct {
-	rows []product
+	rows []Product
 	idx  int
+	err  error
 }
 
 func (b *bulkProducts) Next() bool {
@@ -11,11 +12,13 @@ func (b *bulkProducts) Next() bool {
 }
 
 func (b *bulkProducts) Values() ([]interface{}, error) {
-	return b.rows[b.idx].interfaceSlice(), nil
+	data, err := b.rows[b.idx].interfaceSlice()
+	b.err = err
+	return data, err
 }
 
 func (b *bulkProducts) Err() error {
-	return nil
+	return b.err
 }
 
 type bulkOfferIDs struct {
