@@ -92,17 +92,24 @@ func (s *Storage) Upsert(ctx context.Context, products []Product) (int64, int64,
 
 	s.logger.Debug("Performing insert from temporary to products")
 	var inserted, updated int64
-	sql = `WITH t AS
-        (INSERT INTO products
-         SELECT * FROM products_temporary
-             ON CONFLICT (merchant_id, offer_id) DO UPDATE
-			SET name = excluded.name,
-                price = excluded.price,
-                quantity = excluded.quantity
-      RETURNING xmax)
-         SELECT SUM(CASE WHEN xmax = 0 THEN 1 ELSE 0 END) AS inserted,
-                SUM(CASE WHEN xmax::text::int > 0 THEN 1 ELSE 0 END) AS updated
-           FROM t`
+	sql = `WITH xmax_values AS
+                    (INSERT INTO products
+                     SELECT * FROM products_temporary
+                         ON CONFLICT (merchant_id, offer_id) DO UPDATE
+			            SET name = excluded.name,
+                            price = excluded.price,
+                            quantity = excluded.quantity
+                      WHERE products.name <> excluded.name
+                         OR products.price <> excluded.price
+                         OR products.quantity <> excluded.quantity
+                  RETURNING xmax),
+                 temp_stats AS
+                    (SELECT SUM(CASE WHEN xmax = 0 THEN 1 ELSE 0 END) AS inserted,
+                            SUM(CASE WHEN xmax::text::int > 0 THEN 1 ELSE 0 END) AS updated
+                       FROM xmaxs)
+                     SELECT COALESCE(inserted, 0) AS inserted,
+		                    COALESCE(updated, 0) AS updated
+		               FROM temp_stats`
 
 	err = tx.QueryRow(ctx, sql).Scan(&inserted, &updated)
 	if err != nil {
