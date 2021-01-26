@@ -73,7 +73,7 @@ func (s *Storage) Upsert(ctx context.Context, products []Product) (int64, int64,
              (LIKE products
          INCLUDING CONSTRAINTS
          INCLUDING INDEXES)
-                ON COMMIT DELETE ROWS`
+                ON COMMIT DROP`
 
 	_, err = tx.Exec(ctx, sql)
 	if err != nil {
@@ -195,7 +195,7 @@ func (s *Storage) Delete(ctx context.Context, merchantID int64, offerIDs []int64
 		s.logger.Debug("Creating temporary table")
 
 		sql := `CREATE TEMPORARY TABLE offer_ids_temporary (offer_id offer_id)
-                    ON COMMIT DELETE ROWS`
+                    ON COMMIT DROP`
 
 		_, err = tx.Exec(ctx, sql)
 		if err != nil {
