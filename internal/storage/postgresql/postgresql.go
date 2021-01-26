@@ -106,7 +106,7 @@ func (s *Storage) Upsert(ctx context.Context, products []Product) (int64, int64,
                  temp_stats AS
                     (SELECT SUM(CASE WHEN xmax = 0 THEN 1 ELSE 0 END) AS inserted,
                             SUM(CASE WHEN xmax::text::int > 0 THEN 1 ELSE 0 END) AS updated
-                       FROM xmaxs)
+                       FROM xmax_values)
                      SELECT COALESCE(inserted, 0) AS inserted,
 		                    COALESCE(updated, 0) AS updated
 		               FROM temp_stats`
