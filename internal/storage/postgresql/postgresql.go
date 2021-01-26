@@ -166,7 +166,7 @@ func (s *Storage) Delete(ctx context.Context, merchantID int64, offerIDs []int64
 	if !isLarge {
 		s.logger.Debug("Performing 'values based' delete")
 
-		sql := `DELETE FROM offerIDs
+		sql := `DELETE FROM products
                  WHERE merchant_id = $1
                    AND offer_id IN (VALUES `
 
