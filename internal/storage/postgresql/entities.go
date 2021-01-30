@@ -8,11 +8,11 @@ import (
 var floatErr = errors.New("decimal value can not be presented as float64")
 
 type Product struct {
-	MerchantID int64
-	OfferID    int64
-	Name       string
-	Price      decimal.Decimal
-	Quantity   int64
+	MerchantID int64           `json:"merchant_id"`
+	OfferID    int64           `json:"offer_id"`
+	Name       string          `json:"name"`
+	Price      decimal.Decimal `json:"price"`
+	Quantity   int64           `json:"quantity"`
 }
 
 func (p Product) interfaceSlice() ([]interface{}, error) {
