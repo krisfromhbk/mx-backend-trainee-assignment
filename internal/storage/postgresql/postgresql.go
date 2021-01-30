@@ -253,6 +253,7 @@ func (s *Storage) Delete(ctx context.Context, merchantID int64, offerIDs []int64
 	return deleted, nil
 }
 
+// listParameters defines fields that affect SELECT SQL query in List method
 type listParameters struct {
 	merchantID int64
 	offerID    int64
@@ -260,35 +261,44 @@ type listParameters struct {
 }
 
 const (
+	// merchant_id column in databased defined to be grater than zero
 	defaultMerchantID = 0
-	defaultOfferID    = 0
-	defaultNameQuery  = ""
+	// offer_id column in databased defined to be grater than zero
+	defaultOfferID = 0
+	// name column in database defined not to be blank
+	defaultNameQuery = ""
 )
 
+// isAnyNonDefault returns true only if all fields in listParameters equal to default values
 func (lp listParameters) isAnyNonDefault() bool {
 	return lp.merchantID == defaultMerchantID || lp.offerID == defaultOfferID || lp.nameQuery == defaultNameQuery
 }
 
+// ListOption type represents function to modify listParameters struct
 type ListOption func(parameters *listParameters)
 
+// WithMerchantID applies passed id as merchantID in listParameters struct
 func WithMerchantID(id int64) ListOption {
 	return func(p *listParameters) {
 		p.merchantID = id
 	}
 }
 
+// WithOfferID applies passed id as offerID in listParameters struct
 func WithOfferID(id int64) ListOption {
 	return func(p *listParameters) {
 		p.offerID = id
 	}
 }
 
+// WithNameQuery applies passed query as nameQuery in listParameters struct
 func WithNameQuery(q string) ListOption {
 	return func(p *listParameters) {
 		p.nameQuery = q
 	}
 }
 
+// List returns Product slice from database applying ListOptions if presented.
 func (s *Storage) List(ctx context.Context, options ...ListOption) ([]Product, error) {
 	parameters := &listParameters{
 		merchantID: defaultMerchantID,
