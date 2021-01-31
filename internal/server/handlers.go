@@ -15,6 +15,10 @@ import (
 	"strconv"
 )
 
+type productLister interface {
+	List(context.Context, ...postgresql.ListOption) ([]postgresql.Product, error)
+}
+
 type handler struct {
 	logger    *zap.Logger
 	scheduler *task.Scheduler
