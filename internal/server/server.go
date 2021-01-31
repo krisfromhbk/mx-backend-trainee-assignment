@@ -7,6 +7,7 @@ import (
 	"go.uber.org/zap"
 	"mx/internal/storage/postgresql"
 	"mx/internal/task"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,8 +27,15 @@ func NewServer(logger *zap.Logger, scheduler *task.Scheduler, db *postgresql.Sto
 		return nil, errors.New("no logger provided")
 	}
 
+	currentAddr, err := currentHost(logger)
+	if err != nil {
+		logger.Error("Can not retrieve current address")
+		return nil, err
+	}
+
 	h := handler{
 		logger:    logger,
+		host:      currentAddr,
 		scheduler: scheduler,
 		db:        db,
 	}
@@ -81,4 +89,19 @@ func (s *Server) Start() error {
 // RegisterAfterShutdown registers provided function to be called after Server shutdown
 func (s *Server) RegisterAfterShutdown(f func() error) {
 	s.afterShutdown = f
+}
+
+func currentHost(logger *zap.Logger) (net.IP, error) {
+	conn, err := net.Dial("udp", "8.8.8.8:80")
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			logger.Error("Can not close connection while determining current host")
+		}
+	}()
+
+	return conn.LocalAddr().(*net.UDPAddr).IP, nil
 }
