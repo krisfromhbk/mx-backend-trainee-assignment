@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"github.com/rs/xid"
@@ -8,6 +9,7 @@ import (
 	"io/ioutil"
 	"mx/internal/storage/postgresql"
 	"mx/internal/task"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -21,8 +23,9 @@ type productLister interface {
 
 type handler struct {
 	logger    *zap.Logger
+	host      net.IP
 	scheduler *task.Scheduler
-	db        *postgresql.Storage
+	db        productLister
 }
 
 func (h *handler) handleUpload(w http.ResponseWriter, r *http.Request) {
@@ -95,7 +98,18 @@ func (h *handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 
 	h.scheduler.NewTask(taskID, merchantID, filePath)
 
-	w.Header().Set("Location", "http://172.20.224.1:8080/tasks?id="+taskID.String())
+	var locationHost string
+	dnsNames, err := net.LookupAddr(h.host.String())
+	if err != nil {
+		h.logger.Warn("Can not lookup DNS name", zap.String("IP address", h.host.String()))
+		locationHost = h.host.String()
+	} else {
+		locationHost = dnsNames[0]
+	}
+
+	location := net.JoinHostPort(locationHost, "8080")
+
+	w.Header().Set("Location", "http://"+location+"/tasks?id="+taskID.String())
 	w.WriteHeader(http.StatusOK)
 	return
 }
