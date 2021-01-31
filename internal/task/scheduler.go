@@ -5,7 +5,7 @@ import (
 	"errors"
 	"github.com/rs/xid"
 	"go.uber.org/zap"
-	"math/rand"
+	"mx/internal/storage/postgresql"
 	"sync"
 	"time"
 )
@@ -26,14 +26,19 @@ type cancelChannels struct {
 	stopChannels   map[xid.ID]chan struct{}
 }
 
-type scheduler struct {
+type Scheduler struct {
 	logger         *zap.Logger
 	taskTimeout    time.Duration
 	taskStore      *store
 	cancelChannels *cancelChannels
+	db             *postgresql.Storage
 }
 
-func NewScheduler(logger *zap.Logger) *scheduler {
+func NewScheduler(logger *zap.Logger, db *postgresql.Storage) (*Scheduler, error) {
+	if logger == nil {
+		return nil, errors.New("no logger provided")
+	}
+
 	taskStore := &store{
 		rw:    sync.RWMutex{},
 		tasks: make(map[xid.ID]task),
@@ -45,19 +50,19 @@ func NewScheduler(logger *zap.Logger) *scheduler {
 		stopChannels:   make(map[xid.ID]chan struct{}),
 	}
 
-	scheduler := &scheduler{
+	scheduler := &Scheduler{
 		logger:         logger,
 		taskTimeout:    20 * time.Second,
 		taskStore:      taskStore,
 		cancelChannels: cancelChannels,
+		db:             db,
 	}
 
-	return scheduler
+	return scheduler, nil
 }
 
-func (s *scheduler) NewTask() string {
-	id := xid.New()
-	logger := s.logger.With(zap.String("ID", id.String()))
+func (s *Scheduler) NewTask(taskID xid.ID, merchantID int64, filePath string) {
+	logger := s.logger.With(zap.String("ID", taskID.String()))
 	logger.Info("Creating new task")
 
 	t := task{
@@ -76,15 +81,13 @@ func (s *scheduler) NewTask() string {
 	logger.Info("Saving task state to memory")
 
 	s.taskStore.rw.Lock()
-	s.taskStore.tasks[id] = t
+	s.taskStore.tasks[taskID] = t
 	s.taskStore.rw.Unlock()
 
-	go s.schedule(context.Background(), logger, id)
-
-	return id.String()
+	go s.schedule(context.Background(), logger, taskID, merchantID, filePath)
 }
 
-func (s *scheduler) ReadTaskStatus(stringID string) (string, error) {
+func (s *Scheduler) ReadTaskStatus(stringID string) (string, error) {
 	id, err := xid.FromString(stringID)
 	if err != nil {
 		return "", ErrBadTaskID
@@ -98,10 +101,14 @@ func (s *scheduler) ReadTaskStatus(stringID string) (string, error) {
 		return "", ErrBadTaskID
 	}
 
+	if task.state == Done {
+		return task.state.String() + " " + task.result.data.String(), nil
+	}
+
 	return task.state.String(), nil
 }
 
-func (s *scheduler) CancelTask(stringID string) error {
+func (s *Scheduler) CancelTask(stringID string) error {
 	id, err := xid.FromString(stringID)
 	if err != nil {
 		return ErrBadTaskID
@@ -137,12 +144,12 @@ func (s *scheduler) CancelTask(stringID string) error {
 // schedule prepares and starts goroutines that process task
 // only this function is responsible for changing task state
 // signals for such updates come through cancelChannels
-func (s *scheduler) schedule(ctx context.Context, logger *zap.Logger, id xid.ID) {
+func (s *Scheduler) schedule(ctx context.Context, logger *zap.Logger, id xid.ID, merchantID int64, filePath string) {
 	logger.Info("Scheduling task")
 	ctx, cancel := context.WithTimeout(ctx, s.taskTimeout)
 	defer cancel()
 
-	doneCh := make(chan struct{})
+	resultCh := make(chan taskResult)
 	abortCh := make(chan struct{})
 	cancelCh := make(chan struct{})
 	stopCh := make(chan struct{})
@@ -152,7 +159,7 @@ func (s *scheduler) schedule(ctx context.Context, logger *zap.Logger, id xid.ID)
 	s.cancelChannels.stopChannels[id] = stopCh
 	s.cancelChannels.rw.Unlock()
 
-	go processTask(ctx, logger, doneCh, abortCh)
+	go trueProcessTask(ctx, logger, resultCh, abortCh, s.db, merchantID, filePath)
 
 	select {
 	// processing timing out
@@ -174,8 +181,14 @@ func (s *scheduler) schedule(ctx context.Context, logger *zap.Logger, id xid.ID)
 		s.updateTaskState(id, Aborted)
 
 	// processing successful finishing
-	case <-doneCh:
+	case result := <-resultCh:
 		logger.Info("Task is done")
+		s.taskStore.rw.Lock()
+		t := s.taskStore.tasks[id]
+		t.state = Done
+		t.result = result
+		s.taskStore.tasks[id] = t
+		s.taskStore.rw.Unlock()
 		s.updateTaskState(id, Done)
 	}
 
@@ -185,34 +198,10 @@ func (s *scheduler) schedule(ctx context.Context, logger *zap.Logger, id xid.ID)
 	s.cancelChannels.rw.Unlock()
 }
 
-func (s *scheduler) updateTaskState(id xid.ID, state taskState) {
+func (s *Scheduler) updateTaskState(id xid.ID, state taskState) {
 	s.taskStore.rw.Lock()
 	t := s.taskStore.tasks[id]
 	t.state = state
 	s.taskStore.tasks[id] = t
 	s.taskStore.rw.Unlock()
-}
-
-func processTask(ctx context.Context, logger *zap.Logger, doneChannel, abortChannel chan<- struct{}) {
-	toAbort := rand.Intn(2)
-	if toAbort == 1 {
-		logger.Info("Task will be aborted immediately")
-		abortChannel <- struct{}{}
-		close(abortChannel)
-
-		return
-	}
-
-	d := rand.Intn(40)
-	logger.Info("Task will be suspended", zap.Int("seconds", d))
-	time.Sleep(time.Second * time.Duration(d))
-
-	if ctx.Err() == nil {
-		doneChannel <- struct{}{}
-		close(doneChannel)
-
-		return
-	}
-
-	return
 }
