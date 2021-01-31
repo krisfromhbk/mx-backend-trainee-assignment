@@ -1,5 +1,9 @@
 package task
 
+import (
+	"fmt"
+)
+
 // taskState defines helper type to describe different task states
 // one should probably think of state guarantees taking into account situations
 // when updating task state in some database may result in an error
@@ -21,7 +25,20 @@ const (
 
 // dataPayload defines lines that were added, updated, removed and ignored respectively during .xlsx file processing
 type dataPayload struct {
-	added, updated, removed, ignored uint
+	added, updated, removed, ignored int64
+}
+
+// String returns string representation of dataPayload struct
+func (d dataPayload) String() string {
+	result := fmt.Sprintf(
+		"Added: %d, Updated: %d, Removed: %d, Ignored: %d",
+		d.added,
+		d.updated,
+		d.removed,
+		d.ignored,
+	)
+
+	return result
 }
 
 // taskResult defines fields used for processing task results

@@ -42,13 +42,13 @@ ALTER DOMAIN public.product_name
 -- DROP DOMAIN public.product_price;
 
 CREATE DOMAIN public.product_price
-    AS money
+    AS numeric(14,2)
     NOT NULL;
 
 ALTER DOMAIN public.product_price OWNER TO kris;
 
 ALTER DOMAIN public.product_price
-    ADD CONSTRAINT positive_product_price CHECK (VALUE > 0::money);
+    ADD CONSTRAINT positive_price CHECK (VALUE > 0::numeric);
 
 -- DOMAIN: public.product_quantity
 
