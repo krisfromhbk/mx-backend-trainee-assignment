@@ -12,7 +12,7 @@ import (
 // 3. insert rows from temporary table into "products"
 // if provided ctx is not canceled or timed out transaction will be committed.
 //
-// Upsert will run as nested transaction providing asNestedTo option. By default it runs as stand-alone one.
+// Upsert will run as nested transaction providing asNestedTo option. By default, it runs as stand-alone one.
 //
 // Returns added and updated rows count and error
 func (s *Storage) Upsert(ctx context.Context, products []Product, options ...txOption) (int64, int64, error) {
@@ -26,15 +26,15 @@ func (s *Storage) Upsert(ctx context.Context, products []Product, options ...txO
 	var tx pgx.Tx
 	var err error
 	if txOptions.runAsChild {
-		s.logger.Debug("Running upsert as nested transaction")
+		s.logger.Debug("running upsert as nested transaction")
 		tx, err = txOptions.parentTx.Begin(ctx)
 	} else {
-		s.logger.Debug("Running upsert as stand-alone transaction")
+		s.logger.Debug("running upsert as stand-alone transaction")
 		tx, err = s.db.Begin(ctx)
 	}
 
 	if err != nil {
-		s.logger.Error("Begin upsert transaction")
+		s.logger.Error("failed to begin upsert transaction")
 		return 0, 0, err
 	}
 	// error handling can be omitted for rollback according to docs
@@ -42,7 +42,7 @@ func (s *Storage) Upsert(ctx context.Context, products []Product, options ...txO
 	// TODO: define timeout for transaction rollback
 	defer tx.Rollback(context.Background())
 
-	s.logger.Debug("Creating temporary table")
+	s.logger.Debug("creating temporary table")
 
 	sql := `CREATE TEMPORARY TABLE products_temporary
              (LIKE products
@@ -52,20 +52,20 @@ func (s *Storage) Upsert(ctx context.Context, products []Product, options ...txO
 
 	_, err = tx.Exec(ctx, sql)
 	if err != nil {
-		s.logger.Error("Create temporary table")
+		s.logger.Error("failed to create temporary table")
 		return 0, 0, err
 	}
 
-	s.logger.Debug("Performing bulkProducts insert on temporary table")
+	s.logger.Debug("performing bulk products insert on temporary table")
 
 	columnNames := []string{"merchant_id", "offer_id", "name", "price", "quantity"}
 	_, err = tx.CopyFrom(ctx, pgx.Identifier{"products_temporary"}, columnNames, &bulkData)
 	if err != nil {
-		s.logger.Error("Bulk insert")
+		s.logger.Error("failed to perform bulk insert")
 		return 0, 0, err
 	}
 
-	s.logger.Debug("Performing insert from temporary to products")
+	s.logger.Debug("performing insert from temporary table to products")
 	var inserted, updated int64
 	sql = `WITH xmax_values AS
                     (INSERT INTO products
@@ -88,7 +88,7 @@ func (s *Storage) Upsert(ctx context.Context, products []Product, options ...txO
 
 	err = tx.QueryRow(ctx, sql).Scan(&inserted, &updated)
 	if err != nil {
-		s.logger.Error("Insert from temporary to products")
+		s.logger.Error("failed to insert from temporary table to products")
 		return 0, 0, err
 	}
 
@@ -96,24 +96,24 @@ func (s *Storage) Upsert(ctx context.Context, products []Product, options ...txO
 	if ctxErr != nil {
 		switch {
 		case errors.Is(ctxErr, context.DeadlineExceeded):
-			s.logger.Info("Task deadline exceeded")
+			s.logger.Info("task deadline is exceeded")
 			return 0, 0, ctxErr
 
 		case errors.Is(ctxErr, context.Canceled):
-			s.logger.Info("Task is canceled")
+			s.logger.Info("task is canceled")
 			return 0, 0, ctxErr
 		}
 	}
 
 	if txOptions.runAsChild {
-		s.logger.Debug("Committing nested upsert transaction")
+		s.logger.Debug("committing nested upsert transaction")
 	} else {
-		s.logger.Debug("Committing stand-alone upsert transaction")
+		s.logger.Debug("committing stand-alone upsert transaction")
 	}
 
 	err = tx.Commit(ctx)
 	if err != nil {
-		s.logger.Error("Commit nested upsert transaction")
+		s.logger.Error("failed to commit nested upsert transaction")
 		return 0, 0, err
 	}
 
