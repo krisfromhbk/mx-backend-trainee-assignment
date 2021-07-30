@@ -22,7 +22,10 @@ func NewStorage(ctx context.Context, logger *zap.Logger) (*Storage, error) {
 		return nil, errors.New("no logger provided")
 	}
 
-	config, _ := pgxpool.ParseConfig("")
+	config, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return nil, err
+	}
 
 	config.ConnConfig.Logger = zapadapter.NewLogger(logger)
 	config.ConnConfig.LogLevel = pgx.LogLevelError
