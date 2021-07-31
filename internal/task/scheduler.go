@@ -62,8 +62,8 @@ func NewScheduler(logger *zap.Logger, db *postgresql.Storage) (*Scheduler, error
 }
 
 func (s *Scheduler) NewTask(taskID xid.ID, merchantID int64, filePath string) {
-	logger := s.logger.With(zap.String("ID", taskID.String()))
-	logger.Info("Creating new task")
+	logger := s.logger.With(zap.String("task_id", taskID.String()))
+	logger.Info("creating new task")
 
 	t := task{
 		state: Processing,
@@ -78,7 +78,7 @@ func (s *Scheduler) NewTask(taskID xid.ID, merchantID int64, filePath string) {
 		},
 	}
 
-	logger.Info("Saving task state to memory")
+	logger.Info("saving initial task state to memory")
 
 	s.taskStore.rw.Lock()
 	s.taskStore.tasks[taskID] = t
@@ -102,10 +102,10 @@ func (s *Scheduler) ReadTaskStatus(stringID string) (string, error) {
 	}
 
 	if task.state == Done {
-		return task.state.String() + " " + task.result.data.String(), nil
+		return "State: " + task.state.String() + "\nStats: " + task.result.data.String(), nil
 	}
 
-	return task.state.String(), nil
+	return "State: " + task.state.String(), nil
 }
 
 func (s *Scheduler) CancelTask(stringID string) error {
@@ -133,7 +133,7 @@ func (s *Scheduler) CancelTask(stringID string) error {
 	//default:
 	//	s.cancelChannels.cancelChannels[id] <- struct{}{}
 	//}
-	// TODO: test if next two lines can lead to concurrent writing to close channel
+	// TODO: test if next two lines can lead to concurrent writing to closed channel
 	s.cancelChannels.cancelChannels[id] <- struct{}{}
 	close(s.cancelChannels.cancelChannels[id])
 	s.cancelChannels.rw.Unlock()
@@ -145,7 +145,7 @@ func (s *Scheduler) CancelTask(stringID string) error {
 // only this function is responsible for changing task state
 // signals for such updates come through cancelChannels
 func (s *Scheduler) schedule(ctx context.Context, logger *zap.Logger, id xid.ID, merchantID int64, filePath string) {
-	logger.Info("Scheduling task")
+	logger.Info("scheduling task")
 	ctx, cancel := context.WithTimeout(ctx, s.taskTimeout)
 	defer cancel()
 
@@ -159,17 +159,17 @@ func (s *Scheduler) schedule(ctx context.Context, logger *zap.Logger, id xid.ID,
 	s.cancelChannels.stopChannels[id] = stopCh
 	s.cancelChannels.rw.Unlock()
 
-	go trueProcessTask(ctx, logger, resultCh, abortCh, s.db, merchantID, filePath)
+	go processTask(ctx, logger, resultCh, abortCh, s.db, merchantID, filePath)
 
 	select {
 	// processing timing out
 	case <-ctx.Done():
-		logger.Info("Task is timed out")
+		logger.Info("task is timed out")
 		s.updateTaskState(id, TimedOut)
 
 	// processing cancellation
 	case <-cancelCh:
-		logger.Info("Task is canceled")
+		logger.Info("task is canceled")
 		// any schedule goroutine is the only sender for this channel
 		// while any http-request calling CancelTask is a receiver
 		close(stopCh)
@@ -177,12 +177,12 @@ func (s *Scheduler) schedule(ctx context.Context, logger *zap.Logger, id xid.ID,
 
 	// processing "in-task" error
 	case <-abortCh:
-		logger.Info("Task is aborted")
+		logger.Info("task is aborted")
 		s.updateTaskState(id, Aborted)
 
 	// processing successful finishing
 	case result := <-resultCh:
-		logger.Info("Task is done")
+		logger.Info("task is done")
 		s.taskStore.rw.Lock()
 		t := s.taskStore.tasks[id]
 		t.state = Done
