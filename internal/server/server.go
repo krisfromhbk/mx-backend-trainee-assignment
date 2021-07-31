@@ -17,6 +17,7 @@ import (
 // Server defines fields used in HTTP processing
 type Server struct {
 	logger        *zap.Logger
+	addr          string
 	httpServer    *http.Server
 	afterShutdown func() error
 }
@@ -24,12 +25,16 @@ type Server struct {
 // NewServer constructs a Server
 func NewServer(logger *zap.Logger, scheduler *task.Scheduler, db *postgresql.Storage) (*Server, error) {
 	if logger == nil {
-		return nil, errors.New("no logger provided")
+		return nil, errors.New("no logger is provided")
+	}
+
+	if db == nil {
+		return nil, errors.New("no database is provided")
 	}
 
 	currentAddr, err := currentHost(logger)
 	if err != nil {
-		logger.Error("Can not retrieve current address")
+		logger.Error("can not retrieve current address")
 		return nil, err
 	}
 
@@ -52,11 +57,12 @@ func NewServer(logger *zap.Logger, scheduler *task.Scheduler, db *postgresql.Sto
 
 	return &Server{
 		logger:     logger,
+		addr:       currentAddr.String(),
 		httpServer: httpServer,
 	}, nil
 }
 
-// Start calls ListenAndServe on http.Server instance inside Server struct
+// Start calls ListenAndServe on http.Server struct inside Server struct
 // and implements graceful shutdown via goroutine waiting for signals
 func (s *Server) Start() error {
 	idleConnsClosed := make(chan struct{})
@@ -66,17 +72,17 @@ func (s *Server) Start() error {
 		signal.Notify(sigint, syscall.SIGINT, syscall.SIGTERM)
 		<-sigint
 
-		s.logger.Info("Shutting down HTTP server")
+		s.logger.Info("shutting down HTTP server")
 
 		if err := s.httpServer.Shutdown(context.Background()); err != nil {
-			s.logger.Error("srv.Shutdown: %v", zap.Error(err))
+			s.logger.Error("failed to shutdown HTTP server", zap.Error(err))
 		}
 		s.logger.Info("HTTP server is stopped")
 
 		close(idleConnsClosed)
 	}()
 
-	s.logger.Info("Starting HTTP server")
+	s.logger.Info("starting HTTP server", zap.String("addr", s.httpServer.Addr), zap.String("detected_host", s.addr))
 	if err := s.httpServer.ListenAndServe(); err != http.ErrServerClosed {
 		return fmt.Errorf("s.httpServer.ListenAndServe: %v", err)
 	}
@@ -99,7 +105,7 @@ func currentHost(logger *zap.Logger) (net.IP, error) {
 	defer func() {
 		err := conn.Close()
 		if err != nil {
-			logger.Error("Can not close connection while determining current host")
+			logger.Error("can not close connection while determining current host")
 		}
 	}()
 
