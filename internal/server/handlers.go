@@ -31,7 +31,7 @@ type handler struct {
 func (h *handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	taskID := xid.New()
 	logger := h.logger.With(zap.String("task_id", taskID.String()))
-	logger.Info("Upload handler invocation")
+	logger.Info("upload handler invocation")
 
 	q, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
@@ -56,8 +56,11 @@ func (h *handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger = logger.With(zap.Int64("merchant_id", merchantID))
+
 	err = os.MkdirAll(merchantIDString, 0750)
 	if err != nil {
+		logger.Error("failed to create directory", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -65,33 +68,43 @@ func (h *handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	filePath := filepath.Join(merchantIDString, taskID.String()+".xlsx")
 	file, err := os.Create(filePath)
 	if err != nil {
-		h.logger.Error("Creating file", zap.Error(err))
+		logger.Error("failed to create file", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	defer file.Close()
+	defer func() {
+		err = file.Close()
+		if err != nil {
+			logger.Error("failed to close file", zap.Error(err), zap.String("file_path", filePath))
+		}
+	}()
 
-	f, fh, err := r.FormFile("workbook")
+	formFile, fileHeader, err := r.FormFile("workbook")
 	if err != nil {
-		h.logger.Error("Retrieving multipart file", zap.Error(err))
+		h.logger.Error("failed to retrieve multipart file", zap.Error(err))
 
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
-	defer f.Close()
+	defer func() {
+		err = formFile.Close()
+		if err != nil {
+			logger.Error("failed to close formFile", zap.Error(err))
+		}
+	}()
 
-	logger.Info("File info: ", zap.String("name", fh.Filename), zap.Int64("size", fh.Size))
+	logger.Info("file info", zap.String("name", fileHeader.Filename), zap.Int64("size_bytes", fileHeader.Size))
 
-	data, err := ioutil.ReadAll(f)
+	data, err := ioutil.ReadAll(formFile)
 	if err != nil {
-		h.logger.Error("Reading file data", zap.Error(err))
+		h.logger.Error("failed to read file data", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 
 	_, err = file.Write(data)
 	if err != nil {
-		h.logger.Error("Writing file data on disk", zap.Error(err))
+		h.logger.Error("failed to write file data on disk", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
@@ -101,7 +114,7 @@ func (h *handler) handleUpload(w http.ResponseWriter, r *http.Request) {
 	var locationHost string
 	dnsNames, err := net.LookupAddr(h.host.String())
 	if err != nil {
-		h.logger.Warn("Can not lookup DNS name", zap.String("IP address", h.host.String()))
+		h.logger.Warn("can not lookup DNS name", zap.String("IP address", h.host.String()))
 		locationHost = h.host.String()
 	} else {
 		locationHost = dnsNames[0]
@@ -134,7 +147,7 @@ func (h *handler) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Bad task id", http.StatusBadRequest)
 			return
 		default:
-			h.logger.Error("Reading task status", zap.Error(err))
+			h.logger.Error("failed to read task status", zap.Error(err))
 			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 			return
 		}
@@ -142,7 +155,7 @@ func (h *handler) handleTaskStatus(w http.ResponseWriter, r *http.Request) {
 
 	_, err = w.Write([]byte(taskStatus))
 	if err != nil {
-		h.logger.Error("Writing response", zap.Error(err))
+		h.logger.Error("failed to write response", zap.Error(err))
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 	}
 	return
