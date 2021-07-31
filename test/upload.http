@@ -1,0 +1,9 @@
+POST http://localhost:8080/upload?merchant_id=43
+Content-Type: multipart/form-data; boundary=WebAppBoundary
+
+--WebAppBoundary
+Content-Disposition: form-data; name="workbook"; filename="test.xlsx"
+Content-Type: application/json
+
+< ./testdata/test.xlsx
+--WebAppBoundary--
